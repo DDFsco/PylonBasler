@@ -27,7 +27,7 @@
   </section>
   <section>
     <h2>Real camera study</h2>
-    <p class="muted">Records 1–6 physical cameras at native resolution and pixel format. Free-run recording requires no TTL pulse. The requested frame-rate limit and all trigger settings are restored afterward. Live preview targets 10 fps and runs separately from lossless recording.</p>
+    <p class="muted">Records 1–6 physical cameras at native resolution and pixel format. Free-run recording requires no TTL pulse. The requested frame-rate limit and all trigger settings are restored afterward. Fast lossless recording has priority; live preview targets 10 fps and automatically slows when the writer is busy.</p>
     <label>Camera serial numbers, separated by commas<input id="realSerial" placeholder="40488229,40462265"></label>
     <div class="pair"><label>Frame rate<input id="realFps" type="number" min="1" max="100" value="30"></label><label>Duration in seconds<input id="realSeconds" type="number" min="1" max="14400" value="60"></label></div>
     <button id="realStart" type="button">Start real study</button>

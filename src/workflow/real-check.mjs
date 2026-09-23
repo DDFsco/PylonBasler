@@ -7,9 +7,10 @@ import {fileURLToPath} from 'node:url';
 
 const project=fileURLToPath(new URL('../../',import.meta.url));
 export function validateSettings(options={}){
-  const {fps=10,seconds=10}=options;
+  const {fps=10,seconds=10,cameraCount=1}=options;
   if(!Number.isInteger(fps)||fps<1||fps>100||!Number.isInteger(seconds)||seconds<1||seconds>14400)throw new Error('A real study requires integer fps from 1–100 and duration from 1–14,400 seconds');
-  return {fps,seconds};
+  if(!Number.isInteger(cameraCount)||cameraCount<1||cameraCount>6)throw new Error('Camera count must be between 1 and 6');
+  return {fps,seconds,cameraCount};
 }
 export function validateSerials(value){
   const serials=Array.isArray(value)?value:[value];
@@ -52,7 +53,7 @@ export class RealCameraCheck {
     const python=process.env.CAMERA_PYTHON??(fs.existsSync(venv)?venv:(fs.existsSync(bundled)?bundled:(process.platform==='win32'?'python':'python3')));
     this.directory=path.join(this.root,'run_'+randomUUID());fs.mkdirSync(this.directory,{recursive:true});
     this.state='RUNNING';this.report=null;
-    const child=spawn(python,[path.join(project,'scripts/real-camera-check.py'),'--serial',serial,'--fps',String(settings.fps),'--seconds',String(settings.seconds),'--output',this.directory],{cwd:project,windowsHide:true,stdio:['ignore','pipe','pipe']});
+    const child=spawn(python,[path.join(project,'scripts/real-camera-check.py'),'--serial',serial,'--fps',String(settings.fps),'--seconds',String(settings.seconds),'--camera-count',String(settings.cameraCount),'--output',this.directory],{cwd:project,windowsHide:true,stdio:['ignore','pipe','pipe']});
     this.child=child;let output='',errors='';
     child.stdout.on('data',b=>{output=(output+b).slice(-100000);});child.stderr.on('data',b=>{errors=(errors+b).slice(-8192);});
     child.on('error',e=>{errors=e.message;});
@@ -67,6 +68,7 @@ export class RealCameraCheck {
     return this.status();
   }
   startGroup(serials,settings){
+    settings={...settings,cameraCount:serials.length};
     this.directory=path.join(this.root,'group_'+randomUUID());fs.mkdirSync(this.directory,{recursive:true});
     this.members=serials.map(()=>new RealCameraCheck(this.directory));this.child={};this.state='RUNNING';this.report=null;
     const promises=this.members.map((member,i)=>{

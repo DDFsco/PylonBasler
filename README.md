@@ -1,6 +1,6 @@
 # Basler–TDT acquisition workflow 0.3
 
-This Windows application records one to six physical Basler cameras or runs generated-image simulations for software testing. Real studies preserve native Mono8, Mono16, or BayerRG8 pixels in lossless FFV1/MKV files, save per-frame identity and timing metadata, and decode every saved frame for pixel-hash verification.
+This Windows application records one to six physical Basler cameras or runs generated-image simulations for software testing. Real studies preserve native Mono8, Mono16, or BayerRG8 pixels in fast lossless FFVHUFF/MKV files, save per-frame identity and timing metadata, and decode every saved frame for pixel-hash verification.
 
 The current real study mode is **free run without TTL**. It does not require a pulse generator, TDT event input, or active Synapse recording. The application temporarily disables camera trigger modes, applies the requested frame-rate limit, and restores all affected settings after recording. Concurrent starts do not prove synchronized exposure, so reports explicitly keep `synchronization_verified: false`.
 

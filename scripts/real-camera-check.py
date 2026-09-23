@@ -27,9 +27,11 @@ def save(path, value):
     temp.replace(path)
 
 
-def run(serial, output, fps=10, seconds=10):
+def run(serial, output, fps=10, seconds=10, camera_count=1):
     if not (isinstance(fps, int) and 1 <= fps <= 100 and isinstance(seconds, int) and 1 <= seconds <= 14400):
         raise ValueError('A real study requires fps 1–100 and duration 1–14,400 seconds')
+    if not isinstance(camera_count, int) or not 1 <= camera_count <= 6:
+        raise ValueError('Camera count must be between 1 and 6')
     target = fps * seconds
     configured_ffmpeg = os.environ.get('FFMPEG_PATH')
     bundled_ffmpeg = next((ROOT / 'work/tools/ffmpeg').glob('*/bin/ffmpeg.exe'), None)
@@ -47,6 +49,7 @@ def run(serial, output, fps=10, seconds=10):
               'capture_mode': 'free_run_no_ttl', 'ttl_required': False, 'ttl_recorded': False,
               'model': devices[0].GetModelName(), 'target_fps': fps, 'target_frames': target,
               'target_seconds': seconds, 'queue_capacity': 16, 'queue_high_water': 0,
+              'group_camera_count': camera_count, 'video_codec': 'FFVHUFF',
               'hardware_acceptance': False, 'synchronization_verified': False,
               'received_frames': 0, 'written_frames': 0, 'decoded_frames': 0,
               'faults': [], 'settings_restored': False, 'video_verified': False,
@@ -118,8 +121,14 @@ def run(serial, output, fps=10, seconds=10):
             raise RuntimeError('Image buffer memory limit exceeded')
         items = queue.Queue(maxsize=queue_capacity)
         report['queue_capacity'] = queue_capacity
-        if shutil.disk_usage(folder).free < frame_bytes * target * 1.5 + 512 * 1024 * 1024:
-            raise RuntimeError('Insufficient disk space for bounded test')
+        # Every camera process sees the same volume. Reserve enough for the
+        # complete group at near-raw size so concurrent studies cannot each
+        # pass a one-camera check against the same free bytes.
+        required_bytes = int(frame_bytes * target * camera_count * 1.1 + 512 * 1024 * 1024)
+        report['disk_required_bytes'] = required_bytes
+        report['disk_free_bytes_at_start'] = shutil.disk_usage(folder).free
+        if report['disk_free_bytes_at_start'] < required_bytes:
+            raise RuntimeError(f'Insufficient disk space: require {required_bytes} bytes for {camera_count} camera(s)')
         rate = camera.GetNodeMap().GetNode('AcquisitionFrameRate')
         original.update(rate=rate.GetValue(), enabled=camera.AcquisitionFrameRateEnable.Value)
         camera.AcquisitionFrameRateEnable.Value = True
@@ -138,8 +147,8 @@ def run(serial, output, fps=10, seconds=10):
         stderr = open(folder / 'encoder.log', 'wb')
         encoder = subprocess.Popen([str(ffmpeg), '-v', 'error', '-n', '-f', 'rawvideo',
             '-pixel_format', fmt, '-video_size', f'{width}x{height}', '-framerate', str(fps),
-            '-i', 'pipe:0', '-an', '-c:v', 'ffv1', '-level', '3', '-threads', '4',
-            '-g', '1', '-slicecrc', '1', str(folder / 'camera.mkv')],
+            '-i', 'pipe:0', '-an', '-c:v', 'ffvhuff', '-pred', 'left', '-threads', '2',
+            str(folder / 'camera.mkv')],
             stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=stderr,
             creationflags=subprocess.CREATE_NO_WINDOW)
 
@@ -299,6 +308,7 @@ if __name__ == '__main__':
     parser.add_argument('--serial', required=True)
     parser.add_argument('--fps', type=int, default=10)
     parser.add_argument('--seconds', type=int, default=10)
+    parser.add_argument('--camera-count', type=int, default=1)
     parser.add_argument('--output', type=pathlib.Path, default=ROOT / 'outputs/real-camera-checks')
     args = parser.parse_args()
-    sys.exit(run(args.serial, args.output, args.fps, args.seconds))
+    sys.exit(run(args.serial, args.output, args.fps, args.seconds, args.camera_count))

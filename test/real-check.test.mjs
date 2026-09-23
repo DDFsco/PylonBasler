@@ -4,9 +4,10 @@ import fs from 'node:fs';
 import {createApp} from '../src/server.mjs';
 import {RealCameraCheck,validateSerials,summarizeChecks,validateSettings} from '../src/workflow/real-check.mjs';
 test('real study settings are bounded before camera access',()=>{
-  assert.deepEqual(validateSettings(),{fps:10,seconds:10});
-  assert.deepEqual(validateSettings({fps:100,seconds:14400}),{fps:100,seconds:14400});
+  assert.deepEqual(validateSettings(),{fps:10,seconds:10,cameraCount:1});
+  assert.deepEqual(validateSettings({fps:100,seconds:14400,cameraCount:6}),{fps:100,seconds:14400,cameraCount:6});
   for(const options of [{fps:0},{fps:101},{fps:'100'},{seconds:0},{seconds:14401},{seconds:1.5}])assert.throws(()=>validateSettings(options),/requires/);
+  for(const cameraCount of [0,7,1.5,'2'])assert.throws(()=>validateSettings({cameraCount}),/Camera count/);
 });
 
 test('multi camera selection rejects duplicates and more than six cameras',()=>{

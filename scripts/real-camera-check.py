@@ -153,8 +153,10 @@ def run(serial, output, fps=10, seconds=10):
                             index, block, stamp, pc, payload = items.get(timeout=0.1)
                         except queue.Empty:
                             continue
-                        digest = hashlib.sha256(payload).hexdigest()
+                        # Feed the encoder first so it can work while the C
+                        # hashing routine verifies the source frame.
                         encoder.stdin.write(payload)
+                        digest = hashlib.sha256(payload).hexdigest()
                         csv_writer.writerow([index, block, stamp, pc, digest])
                         hashes.append(digest)
                         report['written_frames'] += 1
@@ -194,12 +196,19 @@ def run(serial, output, fps=10, seconds=10):
                     report['queue_high_water'] = max(report['queue_high_water'], items.qsize())
                 except queue.Full:
                     raise RuntimeError('Writer queue overflow')
-                if time.monotonic() >= next_preview:
+                # Recording has priority over display. If the encoder has
+                # accumulated even a small backlog, skip preview work until
+                # the queue recovers instead of allowing a study to fail.
+                preview_queue_limit = max(1, queue_capacity // 16)
+                if time.monotonic() >= next_preview and items.qsize() <= preview_queue_limit:
                     next_preview = time.monotonic() + 1 / preview_target_fps
                     try:
                         preview_items.put_nowait((payload, index, pc))
                     except queue.Full:
                         report['preview_skipped_updates'] = report.get('preview_skipped_updates', 0) + 1
+                elif time.monotonic() >= next_preview:
+                    next_preview = time.monotonic() + 1 / preview_target_fps
+                    report['preview_throttled_updates'] = report.get('preview_throttled_updates', 0) + 1
             finally:
                 grab.Release()
         if report['received_frames'] != target:

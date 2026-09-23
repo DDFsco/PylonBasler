@@ -24,19 +24,26 @@ def publish_preview(path, value, attempts=8):
 
 def preview(payload, width, height, pixel, max_width=480):
     raw = np.frombuffer(payload, dtype='<u2' if pixel == 'Mono16' else 'u1').reshape(height, width)
+    if not isinstance(max_width, int) or not 64 <= max_width <= 1920:
+        raise ValueError('Preview width must be between 64 and 1920 pixels')
     if pixel == 'BayerRG8':
         h, w = height // 2 * 2, width // 2 * 2
-        red = raw[:h:2, :w:2]
-        green = ((raw[:h:2, 1:w:2].astype(np.uint16) + raw[1:h:2, :w:2]) // 2).astype(np.uint8)
-        blue = raw[1:h:2, 1:w:2]
+        # Subsample the mosaic before allocating RGB planes. Live preview is
+        # display-only, so this keeps its memory traffic independent of the
+        # native recording resolution.
+        step = max(1, ((w // 2) + max_width - 1) // max_width)
+        stride = 2 * step
+        red = raw[:h:stride, :w:stride]
+        green = ((raw[:h:stride, 1:w:stride].astype(np.uint16) +
+                  raw[1:h:stride, :w:stride]) // 2).astype(np.uint8)
+        blue = raw[1:h:stride, 1:w:stride]
         rgb = np.stack((red, green, blue), axis=-1)
     else:
         gray = (raw >> 8).astype(np.uint8) if pixel == 'Mono16' else raw
+        step = max(1, (gray.shape[1] + max_width - 1) // max_width)
+        gray = gray[::step, ::step]
         rgb = np.repeat(gray[:, :, None], 3, axis=2)
-    if not isinstance(max_width, int) or not 64 <= max_width <= 1920:
-        raise ValueError('Preview width must be between 64 and 1920 pixels')
-    step = max(1, (rgb.shape[1] + max_width - 1) // max_width)
-    rgb = rgb[::step, ::step].copy()
+    rgb = rgb.copy()
     return {'width': rgb.shape[1], 'height': rgb.shape[0], 'channels': 3,
             'data': base64.b64encode(rgb.tobytes()).decode(),
             'display_conversion': 'Bayer RG 2x2 RGB, no color calibration' if pixel == 'BayerRG8' else pixel}

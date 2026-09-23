@@ -28,6 +28,21 @@ Open `http://127.0.0.1:8765`. Keep the terminal open while recording. Before clo
 
 Free run does not verify simultaneous exposure. Reports therefore keep `synchronization_verified: false`, `ttl_required: false`, and `ttl_recorded: false`.
 
+## Record synchronized cameras with a shared TTL
+
+1. Use the camera and cable manuals to identify one valid input line on each camera. Do not infer connector pins from the software line name.
+2. Connect one pulse source through a suitable fan-out to the same input line on every camera. Record the same pulse in TDT, either from the generating signal inside Synapse or through a digital-input loopback. Use the required common reference/ground and verify electrical levels before connecting the cameras.
+3. In Synapse, configure an Epoc Store for the rising edge and confirm that the event channel changes once for each test pulse. Keep native TDT recording as the authoritative event record.
+4. In the application, discover both cameras, enter both serial numbers, select **External TTL — shared FrameStart**, and select the physical line used by the cable.
+5. Set the pulse rate and duration. The software expects exactly `rate × duration` rising edges. Exposure time must be shorter than one pulse period.
+6. Select **Arm cameras for external TTL**. Do not send pulses while the status is `PREPARING`.
+7. Wait until the group status is `ARMED_WAITING_FOR_TTL`. Start Synapse recording, then enable the finite pulse train.
+8. The status changes to `RECORDING` after every selected camera has received its first triggered frame. Stop the pulse train after the planned edge count. Let the application drain, decode, and verify the videos.
+9. A software pass requires equal target, received, written, and decoded frame counts for every camera, contiguous block IDs, monotonic camera ticks, matching pixel hashes, `camera_ttl_trigger_verified: true`, and restored settings.
+10. Before scientific use, measure trigger-to-exposure latency and inter-camera skew with an oscilloscope or camera exposure outputs. The application intentionally leaves `synchronization_verified: false` until that measurement is documented.
+
+If no frame arrives before the configured wait expires, the run ends in `FAULT` with the selected input line in the error. Check pulse voltage, polarity, fan-out, cable pinout, line selection, ground/reference, and whether the pulse train began only after all cameras were armed.
+
 Real study files are stored under `outputs/real-camera-checks`. Each camera folder contains the lossless MKV, frame metadata CSV, encoder log, report, and final process result. Group studies also contain `group-report.json`.
 
 ## Review saved frames

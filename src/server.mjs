@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url';
 import {Session} from './workflow/session.mjs';
 import {SynapseStatus} from './workflow/adapters.mjs';
 import {inspectSession} from './workflow/recovery.mjs';
-import {attachTDT} from './workflow/tdt-import.mjs';
+import {attachTDT,attachRealTDT} from './workflow/tdt-import.mjs';
 import {findFFmpeg} from './workflow/config.mjs';
 import {launch} from './workflow/video.mjs';
 import {RealCameraCheck} from './workflow/real-check.mjs';
@@ -58,13 +58,18 @@ export function createApp(root=path.resolve('outputs/sessions')){
       if(req.headers.origin&&req.headers.origin!==origin)return json({error:'Origin rejected'},403);
       let body='',bytes=0;for await(const chunk of req){bytes+=chunk.length;if(bytes>3e6)throw new Error('Request too large');body+=chunk;}const data=JSON.parse(body||'{}');
       if(route==='/api/real/stop')return json(realCheck.stop());
+      if(route==='/api/real/attach-tdt'){
+        if(realCheck.child)throw new Error('Wait for real-camera recording to finish');
+        return json(attachRealTDT(realMedia.locate(data.id),data));
+      }
       if(route==='/api/camera/settings'){
         if(busy||realCheck.child||session?.completion&&!session.report)throw new Error('Camera settings unavailable during recording or another operation');
         busy=true;try{const result=await cameraSettings(data);if(result.error&&result.rollback)result.error+=` (rollback: ${result.rollback})`;return json(result,result.error?400:200);}finally{busy=false;}
       }
       if(route==='/api/real/start'){
         if(busy||auditBusy||previewBusy||realMedia.busy||session?.completion&&!session.report)throw new Error('Wait for the current operation to finish');
-        return json(realCheck.start(data.serials??data.serial,{fps:data.fps,seconds:data.seconds}));
+        return json(realCheck.start(data.serials??data.serial,{fps:data.fps,seconds:data.seconds,
+          captureMode:data.captureMode,triggerSource:data.triggerSource,triggerWaitSeconds:data.triggerWaitSeconds}));
       }
       if(realCheck.child)throw new Error('A real camera study is active; wait for finalization');
       if(route==='/api/configure'){

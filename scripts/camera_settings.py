@@ -21,6 +21,42 @@ def snapshot(camera):
                 if name in INTS: item['step'] = n.GetInc()
             result['fields'][name] = item
         except genicam.GenericException: continue
+    selected = None
+    try:
+        selected = camera.TriggerSelector.Value
+        camera.TriggerSelector.Value = 'FrameStart'
+        result['external_trigger'] = {
+            'selector':'FrameStart',
+            'sources':[x for x in camera.TriggerSource.Symbolics if x.startswith('Line')],
+            'activations':list(camera.TriggerActivation.Symbolics),
+            'configured_mode':camera.TriggerMode.Value,
+            'configured_source':camera.TriggerSource.Value,
+            'configured_activation':camera.TriggerActivation.Value,
+        }
+    except genicam.GenericException:
+        result['external_trigger'] = {'error':'FrameStart trigger capability unavailable'}
+    finally:
+        if selected is not None:
+            try: camera.TriggerSelector.Value = selected
+            except genicam.GenericException: pass
+    selected_line = None
+    try:
+        selected_line = camera.LineSelector.Value
+        lines = []
+        for name in camera.LineSelector.Symbolics:
+            camera.LineSelector.Value = name
+            item = {'name':name}
+            for field in ['LineMode','LineStatus']:
+                try: item[field] = getattr(camera,field).Value
+                except genicam.GenericException: pass
+            lines.append(item)
+        result['lines'] = lines
+    except genicam.GenericException:
+        pass
+    finally:
+        if selected_line is not None:
+            try: camera.LineSelector.Value = selected_line
+            except genicam.GenericException: pass
     return result
 
 def validate(changes, current):

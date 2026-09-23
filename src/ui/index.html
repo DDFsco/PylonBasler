@@ -13,7 +13,7 @@
   <div><span class="eyebrow">ACQUISITION LAB</span><h1>Basler <span>×</span> TDT</h1></div>
   <div class="badge">REAL STUDY + SIMULATION</div>
 </header>
-<p class="notice">Real studies currently use camera free run and do not require TTL pulses. Cameras start concurrently, but exposure synchronization is not verified until hardware triggering and TDT event capture are connected.</p>
+<p class="notice">Use free run when no trigger cable is connected. After wiring one shared TTL source to every camera and a TDT digital input, use External TTL FrameStart so every rising edge requests one frame from every armed camera.</p>
 <main>
 <aside>
   <section>
@@ -27,9 +27,12 @@
   </section>
   <section>
     <h2>Real camera study</h2>
-    <p class="muted">Records 1–6 physical cameras at native resolution and pixel format. Free-run recording requires no TTL pulse. The requested frame-rate limit and all trigger settings are restored afterward. Fast lossless recording has priority; live preview targets 10 fps and automatically slows when the writer is busy.</p>
+    <p class="muted">Records 1–6 physical cameras at native resolution and pixel format. External TTL mode arms all selected cameras and waits for rising edges on the chosen input. Start the finite pulse train only after the status reads ARMED_WAITING_FOR_TTL. Camera settings are restored afterward.</p>
     <label>Camera serial numbers, separated by commas<input id="realSerial" placeholder="40488229,40462265"></label>
+    <label>Capture mode<select id="realCaptureMode"><option value="free_run_no_ttl">Free run — no TTL required</option><option value="external_ttl_frame_start">External TTL — shared FrameStart</option></select></label>
+    <div class="pair"><label>Camera trigger input<select id="realTriggerSource"><option>Line1</option><option>Line2</option><option>Line3</option><option>Line4</option></select></label><label>Wait for first TTL (seconds)<input id="realTriggerWait" type="number" min="5" max="600" value="120"></label></div>
     <div class="pair"><label>Frame rate<input id="realFps" type="number" min="1" max="100" value="30"></label><label>Duration in seconds<input id="realSeconds" type="number" min="1" max="14400" value="60"></label></div>
+    <p id="ttlInstructions" class="muted">Free run starts immediately and does not synchronize camera exposure.</p>
     <button id="realStart" type="button">Start real study</button>
     <button id="realStop" type="button" disabled>Stop real study</button>
     <pre id="realStatus">IDLE — not started</pre>
@@ -61,6 +64,7 @@
     <h3>Saved real recordings</h3>
     <div class="toolbar"><select id="realRecordings"><option value="">Select a real recording</option></select><button id="realRefresh">Refresh recordings</button><input id="realFrameIndex" type="number" min="0" value="0" aria-label="Real recording frame index"><button id="realReplay">Decode saved frame</button><button id="realNext">Next frame</button></div>
     <p id="realReplayLabel" class="muted"></p><canvas id="realReplayCanvas" hidden style="max-width:100%"></canvas>
+    <details><summary>Attach TDT TTL evidence to this real recording</summary><p class="muted">After Synapse finalizes, export the TTL events with sample indices. The application checks the export, compares rising-edge and camera-frame counts, and preserves the native block reference. Timing calibration is still required for final synchronization acceptance.</p><label>Operator<input id="realTdtOperator"></label><label>Existing native TDT block directory<input id="realTdtPath"></label><label>TTL CSV<input id="realTtlFile" type="file" accept=".csv"></label><button id="realAttachTdt">Attach TDT evidence</button><pre id="realTdtStatus">No TDT evidence attached in this browser session.</pre></details>
   </section>
   <section>
     <h2>Simulation</h2>

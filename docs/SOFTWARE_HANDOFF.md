@@ -4,9 +4,9 @@ Start with the [operator guide](OPERATOR_GUIDE.md). On a new Windows workstation
 
 The application has two separate paths:
 
-- Real camera study: one to six Basler cameras, free run without TTL, native-pixel FFV1 recording, per-frame metadata and hashes, live preview, complete decode verification, and camera-setting restoration.
+- Real camera study: one to six Basler cameras, free run or external TTL FrameStart, native-pixel FFVHUFF recording, per-frame metadata and hashes, live preview, complete decode verification, and camera-setting restoration.
 - Simulation: generated images and synthetic events for lifecycle, fault, queue, recovery, and audit testing.
 
 The validated physical baseline is two a2A2590-60ucBAS color cameras at 2592×1944 BayerRG8, 30 fps, for 60 seconds. This establishes local recording throughput only. It does not establish simultaneous exposure or TDT alignment.
 
-Hardware triggering, native TDT events, segmented long-duration real recording, and real neural waveform display remain pending. Preserve every `FAULT` result as well as successful evidence.
+External hardware-trigger configuration and camera-side TTL receipt checks are implemented but await the cable test. Automatic native TDT event retrieval, measured synchronization acceptance, segmented long-duration real recording, and real neural waveform display remain pending. Preserve every `FAULT` result as well as successful evidence.

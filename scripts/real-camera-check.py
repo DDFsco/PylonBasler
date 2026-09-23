@@ -1,4 +1,4 @@
-"""Bounded real-camera study in free-run mode, without TTL or Synapse control."""
+"""Bounded real-camera study in free-run or external-TTL trigger mode."""
 import argparse
 import csv
 import datetime
@@ -27,11 +27,19 @@ def save(path, value):
     temp.replace(path)
 
 
-def run(serial, output, fps=10, seconds=10, camera_count=1):
+def run(serial, output, fps=10, seconds=10, camera_count=1,
+        capture_mode='free_run_no_ttl', trigger_source='Line1', trigger_wait_seconds=120):
     if not (isinstance(fps, int) and 1 <= fps <= 100 and isinstance(seconds, int) and 1 <= seconds <= 14400):
         raise ValueError('A real study requires fps 1–100 and duration 1–14,400 seconds')
     if not isinstance(camera_count, int) or not 1 <= camera_count <= 6:
         raise ValueError('Camera count must be between 1 and 6')
+    if capture_mode not in {'free_run_no_ttl', 'external_ttl_frame_start'}:
+        raise ValueError('Capture mode must be free_run_no_ttl or external_ttl_frame_start')
+    if not isinstance(trigger_source, str) or not trigger_source.startswith('Line'):
+        raise ValueError('External trigger source must be a physical camera input line')
+    if not isinstance(trigger_wait_seconds, int) or not 5 <= trigger_wait_seconds <= 600:
+        raise ValueError('Trigger wait must be 5–600 seconds')
+    ttl_mode = capture_mode == 'external_ttl_frame_start'
     target = fps * seconds
     configured_ffmpeg = os.environ.get('FFMPEG_PATH')
     bundled_ffmpeg = next((ROOT / 'work/tools/ffmpeg').glob('*/bin/ffmpeg.exe'), None)
@@ -46,7 +54,9 @@ def run(serial, output, fps=10, seconds=10, camera_count=1):
     folder = output / ('real_' + datetime.datetime.now().strftime('%Y%m%d_%H%M%S_') + uuid.uuid4().hex[:8])
     folder.mkdir()
     report = {'state': 'PRECHECK', 'mode': 'real_single_camera_study', 'serial': serial,
-              'capture_mode': 'free_run_no_ttl', 'ttl_required': False, 'ttl_recorded': False,
+              'capture_mode': capture_mode, 'ttl_required': ttl_mode, 'ttl_recorded': False,
+              'trigger_source': trigger_source if ttl_mode else None,
+              'trigger_activation': 'RisingEdge' if ttl_mode else None,
               'model': devices[0].GetModelName(), 'target_fps': fps, 'target_frames': target,
               'target_seconds': seconds, 'queue_capacity': 16, 'queue_high_water': 0,
               'group_camera_count': camera_count, 'video_codec': 'FFVHUFF',
@@ -93,20 +103,50 @@ def run(serial, output, fps=10, seconds=10, camera_count=1):
     save(folder / 'report.json', report)
     try:
         camera.Open()
-        # This study explicitly requests free run without TTL. Preserve and restore
-        # every trigger selector so the camera's persistent experiment setup survives.
+        # Preserve every trigger selector before configuring free run or the
+        # external FrameStart input. The original camera setup is restored later.
         selector = camera.TriggerSelector.Value
-        trigger_modes = {}
+        trigger_settings = {}
         original['trigger_selector'] = selector
-        original['trigger_modes'] = trigger_modes
+        original['trigger_settings'] = trigger_settings
         try:
             for name in camera.TriggerSelector.Symbolics:
                 camera.TriggerSelector.Value = name
-                trigger_modes[name] = camera.TriggerMode.Value
+                values = {'mode': camera.TriggerMode.Value}
+                for field in ['TriggerSource', 'TriggerActivation']:
+                    try:
+                        values[field] = getattr(camera, field).Value
+                    except Exception:
+                        pass
+                trigger_settings[name] = values
                 if camera.TriggerMode.Value != 'Off':
                     camera.TriggerMode.Value = 'Off'
                 if camera.TriggerMode.Value != 'Off':
-                    raise RuntimeError('Unable to disable trigger for free-run study: ' + name)
+                    raise RuntimeError('Unable to disable trigger while configuring: ' + name)
+            if ttl_mode:
+                camera.TriggerSelector.Value = 'FrameStart'
+                if trigger_source not in camera.TriggerSource.Symbolics:
+                    raise RuntimeError(f'{trigger_source} is not available as a FrameStart trigger source')
+                camera.TriggerSource.Value = trigger_source
+                camera.TriggerActivation.Value = 'RisingEdge'
+                try:
+                    original['exposure_mode'] = camera.ExposureMode.Value
+                    camera.ExposureMode.Value = 'Timed'
+                except Exception:
+                    pass
+                try:
+                    original['line_selector'] = camera.LineSelector.Value
+                    camera.LineSelector.Value = trigger_source
+                    original['line_mode'] = camera.LineMode.Value
+                    if camera.LineMode.Value != 'Input':
+                        camera.LineMode.Value = 'Input'
+                    report['trigger_line_status_at_arm'] = bool(camera.LineStatus.Value)
+                except Exception as exc:
+                    report['trigger_line_configuration_note'] = str(exc)
+                camera.TriggerMode.Value = 'On'
+                if (camera.TriggerMode.Value != 'On' or camera.TriggerSource.Value != trigger_source or
+                        camera.TriggerActivation.Value != 'RisingEdge'):
+                    raise RuntimeError('External FrameStart trigger configuration readback failed')
         finally:
             camera.TriggerSelector.Value = selector
         pixel = camera.PixelFormat.Value
@@ -131,18 +171,26 @@ def run(serial, output, fps=10, seconds=10, camera_count=1):
             raise RuntimeError(f'Insufficient disk space: require {required_bytes} bytes for {camera_count} camera(s)')
         rate = camera.GetNodeMap().GetNode('AcquisitionFrameRate')
         original.update(rate=rate.GetValue(), enabled=camera.AcquisitionFrameRateEnable.Value)
-        camera.AcquisitionFrameRateEnable.Value = True
-        rate.SetValue(float(fps))
-        if abs(rate.GetValue() - fps) > 0.01:
-            raise RuntimeError('Frame-rate setting readback failed')
+        if ttl_mode:
+            try:
+                camera.AcquisitionFrameRateEnable.Value = False
+            except Exception:
+                pass
+        else:
+            camera.AcquisitionFrameRateEnable.Value = True
+            rate.SetValue(float(fps))
+            if abs(rate.GetValue() - fps) > 0.01:
+                raise RuntimeError('Frame-rate setting readback failed')
         report['resulting_fps_readback'] = camera.ResultingFrameRate.Value
         report['exposure_time_us'] = camera.ExposureTime.Value
         report['exposure_auto'] = camera.ExposureAuto.Value
         report['camera_parameters_at_start'] = snapshot(camera)
-        if report['resulting_fps_readback'] < fps * 0.95:
+        if ttl_mode and report['exposure_time_us'] >= 1_000_000 / fps:
+            raise RuntimeError(f"Exposure {report['exposure_time_us']} us is too long for {fps} TTL pulses/s")
+        if not ttl_mode and report['resulting_fps_readback'] < fps * 0.95:
             raise RuntimeError(f"Requested {fps} fps, resulting {report['resulting_fps_readback']:.3f} fps; exposure {report['exposure_time_us']} us. Exposure/ROI/transport settings cannot meet requested frame rate")
         report.update(width=width, height=height, pixel_format=pixel,
-                      original_settings=original, state='RECORDING')
+                      original_settings=original, state='PREPARING')
         save(folder / 'report.json', report)
         stderr = open(folder / 'encoder.log', 'wb')
         encoder = subprocess.Popen([str(ffmpeg), '-v', 'error', '-n', '-f', 'rawvideo',
@@ -177,17 +225,28 @@ def run(serial, output, fps=10, seconds=10, camera_count=1):
         worker.start()
         camera.MaxNumBuffer = 8
         camera.StartGrabbingMax(target, pylon.GrabStrategy_OneByOne)
-        deadline = time.monotonic() + seconds + 10
+        report['state'] = 'ARMED_WAITING_FOR_TTL' if ttl_mode else 'RECORDING'
+        report['armed_utc'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        save(output / 'armed.json', {'serial': serial, 'capture_mode': capture_mode,
+             'trigger_source': trigger_source if ttl_mode else None, 'armed_utc': report['armed_utc']})
+        save(folder / 'report.json', report)
+        arm_deadline = time.monotonic() + trigger_wait_seconds
+        deadline = None if ttl_mode else time.monotonic() + seconds + 10
         next_preview = 0
         while camera.IsGrabbing():
             if writer_errors:
                 raise RuntimeError('Writer failed: ' + writer_errors[0])
-            if time.monotonic() > deadline:
-                raise RuntimeError('Capture deadline exceeded')
+            now = time.monotonic()
+            if ttl_mode and not report['received_frames'] and now > arm_deadline:
+                raise RuntimeError(f'No TTL-triggered frame received on {trigger_source} within {trigger_wait_seconds} seconds')
+            if deadline is not None and now > deadline:
+                raise RuntimeError('Capture deadline exceeded or TTL pulse train stopped early')
             if (output / 'STOP').exists():
                 raise RuntimeError((output / 'STOP').read_text(encoding='utf-8').strip() or 'Stop requested')
-            grab = camera.RetrieveResult(2000, pylon.TimeoutHandling_ThrowException)
+            grab = camera.RetrieveResult(500 if ttl_mode else 2000, pylon.TimeoutHandling_Return)
             try:
+                if grab is None:
+                    continue
                 if not grab.GrabSucceeded():
                     raise RuntimeError(grab.ErrorDescription)
                 pc = time.monotonic_ns()
@@ -197,6 +256,13 @@ def run(serial, output, fps=10, seconds=10, camera_count=1):
                     raise RuntimeError('Unexpected image payload size')
                 index = report['received_frames']
                 report['received_frames'] += 1
+                if ttl_mode and index == 0:
+                    report['state'] = 'RECORDING'
+                    report['first_ttl_frame_utc'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                    deadline = time.monotonic() + seconds + 10
+                    save(output / 'trigger-received.json', {'serial': serial, 'frame_index': 0,
+                         'pc_monotonic_ns': str(pc), 'camera_ticks': str(stamp),
+                         'received_utc': report['first_ttl_frame_utc']})
                 times.append(pc)
                 block_ids.append(block)
                 ticks.append(stamp)
@@ -219,7 +285,8 @@ def run(serial, output, fps=10, seconds=10, camera_count=1):
                     next_preview = time.monotonic() + 1 / preview_target_fps
                     report['preview_throttled_updates'] = report.get('preview_throttled_updates', 0) + 1
             finally:
-                grab.Release()
+                if grab is not None:
+                    grab.Release()
         if report['received_frames'] != target:
             raise RuntimeError('Unexpected capture frame count')
     except Exception as exc:
@@ -239,10 +306,29 @@ def run(serial, output, fps=10, seconds=10, camera_count=1):
                         restored = restored and (
                             camera.AcquisitionFrameRateEnable.Value == original['enabled'] and
                             abs(camera.GetNodeMap().GetNode('AcquisitionFrameRate').GetValue() - original['rate']) < 0.01)
-                    for name, mode in original.get('trigger_modes', {}).items():
+                    for name, values in original.get('trigger_settings', {}).items():
                         camera.TriggerSelector.Value = name
-                        camera.TriggerMode.Value = mode
-                        restored = restored and camera.TriggerMode.Value == mode
+                        camera.TriggerMode.Value = 'Off'
+                        for field in ['TriggerSource', 'TriggerActivation']:
+                            if field in values:
+                                try:
+                                    getattr(camera, field).Value = values[field]
+                                    restored = restored and getattr(camera, field).Value == values[field]
+                                except Exception:
+                                    restored = False
+                        camera.TriggerMode.Value = values['mode']
+                        restored = restored and camera.TriggerMode.Value == values['mode']
+                    if 'exposure_mode' in original:
+                        camera.ExposureMode.Value = original['exposure_mode']
+                        restored = restored and camera.ExposureMode.Value == original['exposure_mode']
+                    if 'line_selector' in original:
+                        camera.LineSelector.Value = original['line_selector']
+                        if 'line_mode' in original:
+                            try:
+                                camera.LineMode.Value = original['line_mode']
+                                restored = restored and camera.LineMode.Value == original['line_mode']
+                            except Exception:
+                                restored = False
                     if 'trigger_selector' in original:
                         camera.TriggerSelector.Value = original['trigger_selector']
                     report['settings_restored'] = restored
@@ -295,6 +381,8 @@ def run(serial, output, fps=10, seconds=10, camera_count=1):
     report['unwritten_frames'] = report['received_frames'] - report['written_frames']
     report['video_verified'] = (not report['faults'] and report['received_frames'] == report['written_frames'] == report['decoded_frames'] == target and report.get('pixel_hashes_match', False))
     report['target_receive_rate_met'] = report.get('pc_receive_fps', 0) >= fps * 0.95
+    report['ttl_edges_inferred_from_frames'] = report['received_frames'] if ttl_mode else 0
+    report['camera_ttl_trigger_verified'] = bool(ttl_mode and report['received_frames'] == target)
     if report['video_verified'] and not report['target_receive_rate_met']:
         report['faults'].append('Complete video but measured PC receive rate below 95% of target')
     report['state'] = 'COMPLETE' if report['video_verified'] and not report['faults'] else 'FAULT'
@@ -309,6 +397,10 @@ if __name__ == '__main__':
     parser.add_argument('--fps', type=int, default=10)
     parser.add_argument('--seconds', type=int, default=10)
     parser.add_argument('--camera-count', type=int, default=1)
+    parser.add_argument('--capture-mode', choices=['free_run_no_ttl', 'external_ttl_frame_start'], default='free_run_no_ttl')
+    parser.add_argument('--trigger-source', default='Line1')
+    parser.add_argument('--trigger-wait-seconds', type=int, default=120)
     parser.add_argument('--output', type=pathlib.Path, default=ROOT / 'outputs/real-camera-checks')
     args = parser.parse_args()
-    sys.exit(run(args.serial, args.output, args.fps, args.seconds, args.camera_count))
+    sys.exit(run(args.serial, args.output, args.fps, args.seconds, args.camera_count,
+                 args.capture_mode, args.trigger_source, args.trigger_wait_seconds))

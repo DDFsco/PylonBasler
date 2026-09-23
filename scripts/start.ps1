@@ -13,6 +13,6 @@ $localFFmpeg = Get-ChildItem -LiteralPath (Join-Path $projectDir 'work\tools\ffm
 if ($localFFmpeg) { $env:FFMPEG_PATH = $localFFmpeg.FullName }
 
 Write-Host 'Open http://127.0.0.1:8765 after the server starts.'
-Write-Host 'Real studies use free run and do not require TTL pulses.'
+Write-Host 'Real studies support free run or shared external TTL FrameStart triggering.'
 & $nodeCommand.Source src/server.mjs
 exit $LASTEXITCODE

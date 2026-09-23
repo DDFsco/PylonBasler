@@ -4,10 +4,13 @@ import fs from 'node:fs';
 import {createApp} from '../src/server.mjs';
 import {RealCameraCheck,validateSerials,summarizeChecks,validateSettings} from '../src/workflow/real-check.mjs';
 test('real study settings are bounded before camera access',()=>{
-  assert.deepEqual(validateSettings(),{fps:10,seconds:10,cameraCount:1});
-  assert.deepEqual(validateSettings({fps:100,seconds:14400,cameraCount:6}),{fps:100,seconds:14400,cameraCount:6});
+  assert.deepEqual(validateSettings(),{fps:10,seconds:10,cameraCount:1,captureMode:'free_run_no_ttl',triggerSource:'Line1',triggerWaitSeconds:120});
+  assert.deepEqual(validateSettings({fps:100,seconds:14400,cameraCount:6,captureMode:'external_ttl_frame_start',triggerSource:'Line3',triggerWaitSeconds:600}),{fps:100,seconds:14400,cameraCount:6,captureMode:'external_ttl_frame_start',triggerSource:'Line3',triggerWaitSeconds:600});
   for(const options of [{fps:0},{fps:101},{fps:'100'},{seconds:0},{seconds:14401},{seconds:1.5}])assert.throws(()=>validateSettings(options),/requires/);
   for(const cameraCount of [0,7,1.5,'2'])assert.throws(()=>validateSettings({cameraCount}),/Camera count/);
+  assert.throws(()=>validateSettings({captureMode:'bad'}),/capture mode/);
+  assert.throws(()=>validateSettings({triggerSource:'Software'}),/Trigger source/);
+  assert.throws(()=>validateSettings({triggerWaitSeconds:4}),/Trigger wait/);
 });
 
 test('multi camera selection rejects duplicates and more than six cameras',()=>{
@@ -23,6 +26,8 @@ test('concurrent check requires overlapping receives and all streams verified',(
   assert.equal(summarizeChecks([good,{...good,first_pc_monotonic_ns:'12000000000',last_pc_monotonic_ns:'22000000000'}]).state,'FAULT');
   assert.equal(summarizeChecks([good,{...good,state:'FAULT'}]).state,'FAULT');
   assert.equal(summarizeChecks([good,{...good,settings_restored:false}]).state,'FAULT');
+  const triggered=summarizeChecks([{...good,capture_mode:'external_ttl_frame_start',camera_ttl_trigger_verified:true},{...good,capture_mode:'external_ttl_frame_start',camera_ttl_trigger_verified:true}]);
+  assert.equal(triggered.ttl_required,true);assert.equal(triggered.shared_trigger_configured,true);assert.equal(triggered.synchronization_verified,false);
 });
 
 test('real camera start requires serial and rejects an already running check',()=>{

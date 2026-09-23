@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="session-token" content="__TOKEN__">
+  <title>Basler × TDT Acquisition Lab</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+<header>
+  <div><span class="eyebrow">ACQUISITION LAB</span><h1>Basler <span>×</span> TDT</h1></div>
+  <div class="badge">REAL STUDY + SIMULATION</div>
+</header>
+<p class="notice">Real studies currently use camera free run and do not require TTL pulses. Cameras start concurrently, but exposure synchronization is not verified until hardware triggering and TDT event capture are connected.</p>
+<main>
+<aside>
+  <section>
+    <h2>Camera settings</h2>
+    <button id="discoverCameras" type="button">Discover cameras</button>
+    <label>Camera to configure<select id="settingsCamera"><option value="">Discover cameras first</option></select></label>
+    <button id="readCamera" type="button">Read settings</button>
+    <fieldset id="cameraFields" disabled><div id="parameterInputs"></div><button id="applyCamera" type="button">Apply to this camera</button></fieldset>
+    <p class="muted">Changes affect only the selected camera and do not save a permanent UserSet. Disable automatic exposure or gain before entering manual values. ROI limits can change after each adjustment.</p>
+    <pre id="cameraSettingsStatus">Settings have not been read.</pre>
+  </section>
+  <section>
+    <h2>Real camera study</h2>
+    <p class="muted">Records 1–6 physical cameras at native resolution and pixel format. Free-run recording requires no TTL pulse. The requested frame-rate limit and all trigger settings are restored afterward. Live preview targets 10 fps and runs separately from lossless recording.</p>
+    <label>Camera serial numbers, separated by commas<input id="realSerial" placeholder="40488229,40462265"></label>
+    <div class="pair"><label>Frame rate<input id="realFps" type="number" min="1" max="100" value="30"></label><label>Duration in seconds<input id="realSeconds" type="number" min="1" max="14400" value="60"></label></div>
+    <button id="realStart" type="button">Start real study</button>
+    <button id="realStop" type="button" disabled>Stop real study</button>
+    <pre id="realStatus">IDLE — not started</pre>
+  </section>
+  <section>
+    <h2>Synapse status</h2>
+    <button id="tdt">Read Synapse status</button>
+    <p class="muted">Read only. A real camera study can run when Synapse is unavailable. Native TDT recording remains authoritative when it is used.</p>
+    <pre id="tdtStatus">Not queried</pre>
+  </section>
+  <details>
+    <summary>Simulation setup</summary>
+    <form id="setup">
+      <label>Cameras<select name="cameraCount"><option>1</option><option selected>2</option><option>3</option><option>4</option><option>5</option><option>6</option></select></label>
+      <div class="pair"><label>Width<input name="width" type="number" min="16" max="4096" value="160"></label><label>Height<input name="height" type="number" min="16" max="4096" value="96"></label></div>
+      <label>Native pixel format<select name="pixelFormat"><option>Mono8</option><option>BayerRG8</option><option>Mono16</option></select></label>
+      <div class="pair"><label>Target fps<input name="fps" type="number" min="1" max="100" value="100"></label><label>Seconds<input name="durationSeconds" type="number" min="0.1" step="0.1" value="10"></label></div>
+      <label class="check"><input name="manual" type="checkbox"> Stop manually</label>
+      <label>Fault injection<select name="scenario"><option>clean</option><option>missing-frame</option><option>missing-ttl</option><option>duplicate-frame</option><option>duplicate-ttl</option><option>ambiguous</option><option>disconnect</option><option>writer-failure</option><option>slow-writer</option><option>clock-reset</option><option>disk-full</option></select></label>
+      <p id="budget" class="muted"></p><button type="submit" id="configure">Apply simulation configuration</button>
+    </form>
+  </details>
+</aside>
+<section class="workspace">
+  <section>
+    <h2>Live real-camera preview</h2>
+    <p class="muted">The latest display frame remains visible after recording stops. Bayer color is a lightweight display conversion and is not color calibrated; saved pixels remain unchanged.</p>
+    <div id="realPreviews" class="cameras">Start a real study to display live cameras.</div>
+    <h3>Saved real recordings</h3>
+    <div class="toolbar"><select id="realRecordings"><option value="">Select a real recording</option></select><button id="realRefresh">Refresh recordings</button><input id="realFrameIndex" type="number" min="0" value="0" aria-label="Real recording frame index"><button id="realReplay">Decode saved frame</button><button id="realNext">Next frame</button></div>
+    <p id="realReplayLabel" class="muted"></p><canvas id="realReplayCanvas" hidden style="max-width:100%"></canvas>
+  </section>
+  <section>
+    <h2>Simulation</h2>
+    <div class="toolbar"><strong id="state">IDLE</strong><button id="precheck">Precheck</button><button id="arm">Arm</button><button id="start">Start simulation</button><button id="stop">Stop &amp; finalize</button></div>
+    <div id="error" role="alert" hidden></div>
+    <div class="metrics"><div><small>Generated pulses</small><strong id="pulses">0</strong></div><div><small>Elapsed wall time</small><strong id="elapsed">0.0 s</strong></div><div><small>Free storage</small><strong id="free">—</strong></div><div><small>Hardware acceptance</small><strong>NOT TESTED</strong></div></div>
+    <div id="cameras" class="cameras"></div>
+    <section class="neural"><h2>Neural preview <span class="muted">synthetic / arbitrary units</span></h2><canvas id="neural" width="800" height="90"></canvas></section>
+  </section>
+  <section>
+    <h2>Simulation session review</h2>
+    <div class="toolbar"><select id="sessions"><option value="">Select a session</option></select><button id="refresh">Refresh</button><button id="review">Open report</button><button id="audit">Re-decode &amp; audit</button></div>
+    <pre id="report">Completed and partial simulation sessions appear here.</pre>
+    <div class="toolbar"><select id="segments"><option value="">Select segment</option></select><input id="frameIndex" type="number" value="0" min="0" aria-label="Decoded frame index"><button id="replay">Decode frame</button></div>
+    <img id="replayImage" alt="Decoded saved frame" hidden>
+    <details><summary>Attach native TDT reference and TTL export</summary><p class="muted">Imports remain separate from simulation timing; no automatic alignment is asserted. Maximum TTL CSV size is 2 MiB.</p><label>Operator<input id="operator"></label><label>Existing native block directory<input id="nativePath"></label><label>TTL CSV<input id="ttlFile" type="file" accept=".csv"></label><button id="attach">Attach evidence</button></details>
+  </section>
+</section>
+</main>
+<footer>Software integrity evidence and hardware synchronization acceptance are reported separately · schema 0.3</footer>
+</body>
+</html>

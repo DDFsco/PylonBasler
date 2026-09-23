@@ -1,0 +1,1 @@
+{"name":"basler-tdt-workflow","version":"0.3.0","private":true,"type":"module","scripts":{"test":"node --test --test-isolation=none","start":"node src/server.mjs","record-simulation":"node src/workflow/cli.mjs run outputs/sessions","simulate-legacy":"node src/cli.mjs"},"engines":{"node":">=24"}}

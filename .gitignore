@@ -1,0 +1,8 @@
+work/
+node_modules/
+.venv/
+outputs/
+__pycache__/
+*.pyc
+.env
+STOP

@@ -70,4 +70,4 @@ Software tests do not establish camera throughput, hardware synchronization, or 
 - TDT status is read only. Automatic native TDT event retrieval and neural waveform preview are not yet integrated.
 - The simulation path remains separate and cannot claim hardware acceptance.
 
-See [Operator guide](docs/OPERATOR_GUIDE.md), [Real camera study](docs/REAL_CAMERA_STUDY.md), [Camera settings](docs/CAMERA_SETTINGS.md), and [Implementation status](docs/IMPLEMENTATION_STATUS.md).
+Start with the [User and handling guide](docs/USER_AND_HANDLING_GUIDE.md). Additional references include the [Operator guide](docs/OPERATOR_GUIDE.md), [Real camera study](docs/REAL_CAMERA_STUDY.md), [Camera settings](docs/CAMERA_SETTINGS.md), and [Implementation status](docs/IMPLEMENTATION_STATUS.md).

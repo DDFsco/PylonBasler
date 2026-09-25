@@ -64,10 +64,14 @@ Software tests do not establish camera throughput, hardware synchronization, or 
 ## Current limits
 
 - Real studies accept 1–100 fps and 1–14,400 seconds.
-- Each real camera currently writes one MKV and verifies the whole file after capture; segmented long-duration recording is still pending.
+- Each real camera writes lossless five-minute MKV segments. Every segment is fully decoded and checked against the source-frame SHA-256 stream after capture.
 - Free-run camera overlap is based on PC receive times and is not exposure synchronization evidence.
 - External TTL mode verifies that camera frames arrived in response to the configured trigger input. TDT event timestamps remain authoritative in the Synapse block and must be exported or integrated for final cross-system alignment.
 - TDT status is read only. Automatic native TDT event retrieval and neural waveform preview are not yet integrated.
 - The simulation path remains separate and cannot claim hardware acceptance.
 
 Start with the [User and handling guide](docs/USER_AND_HANDLING_GUIDE.md). Additional references include the [Operator guide](docs/OPERATOR_GUIDE.md), [Real camera study](docs/REAL_CAMERA_STUDY.md), [Camera settings](docs/CAMERA_SETTINGS.md), and [Implementation status](docs/IMPLEMENTATION_STATUS.md).
+
+## License
+
+The source code is available under the [MIT License](LICENSE). Basler pylon and FFmpeg remain subject to their own licenses.

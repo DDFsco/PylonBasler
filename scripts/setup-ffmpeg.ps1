@@ -7,7 +7,7 @@ if (Test-Path -LiteralPath $binary) { Write-Host "Already available: $binary"; e
 New-Item -ItemType Directory -Force -Path $toolsDir | Out-Null
 $archive = Join-Path $toolsDir 'ffmpeg.zip'
 if (-not (Test-Path -LiteralPath $archive)) {
-    Invoke-WebRequest 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip' -OutFile $archive
+    Invoke-WebRequest 'https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-9.0.2-essentials_build.zip' -OutFile $archive
 }
 $actualHash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLower()
 if ($actualHash -ne $expectedHash) { throw 'Downloaded archive differs from the tested 9.0.2 build. Preserve it, obtain the pinned build or review a new version; do not execute it automatically.' }

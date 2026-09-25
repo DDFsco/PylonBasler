@@ -281,8 +281,9 @@ Each camera recording normally contains:
 
 | File | Purpose |
 |---|---|
-| `camera.mkv` | Native-pixel, lossless FFVHUFF video |
-| `frames.csv` | Frame index, block ID, camera ticks, host receive time, and SHA-256 |
+| `camera_part00001.mkv`, ... | Native-pixel, lossless FFVHUFF video in five-minute segments |
+| `frames.csv` | Global and segment frame indexes, block ID, camera ticks, host receive time, and SHA-256 |
+| `frame-hashes.sha256` | Streaming source-frame hashes used for bounded-memory verification |
 | `report.json` | Camera result and verification evidence |
 | `encoder.log` | FFmpeg errors, normally empty on success |
 | `process-result.json` | Parent-process result |
@@ -376,7 +377,7 @@ node --test --test-isolation=none
 ## 15. Current operational limits
 
 - Real studies accept 1–100 fps and durations from 1 to 14,400 seconds.
-- Each real camera writes one MKV for the complete study.
+- Each real camera writes five-minute MKV segments and verifies every segment after acquisition.
 - Full-file decode and hash verification occur after acquisition.
 - Long recordings require measured storage and throughput margins.
 - Automatic native TDT event retrieval and live neural-waveform display are not implemented.

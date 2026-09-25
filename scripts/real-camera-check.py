@@ -20,6 +20,20 @@ from pypylon import pylon
 from camera_preview import preview, publish_preview
 from camera_settings import snapshot
 
+WINDOWS_FLAGS = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+
+
+def block_follows(previous, current):
+    """Accept ordinary increments and the 16-bit wrap used by some transports."""
+    return current == previous + 1 or (previous == 65535 and current == 0)
+
+
+def framehashes(path):
+    with open(path, encoding='utf-8') as source:
+        for line in source:
+            if line and not line.startswith('#'):
+                yield line.split(',')[-1].strip()
+
 
 def save(path, value):
     temp = path.with_suffix(path.suffix + '.tmp')
@@ -28,7 +42,8 @@ def save(path, value):
 
 
 def run(serial, output, fps=10, seconds=10, camera_count=1,
-        capture_mode='free_run_no_ttl', trigger_source='Line1', trigger_wait_seconds=120):
+        capture_mode='free_run_no_ttl', trigger_source='Line1', trigger_wait_seconds=120,
+        segment_seconds=300):
     if not (isinstance(fps, int) and 1 <= fps <= 100 and isinstance(seconds, int) and 1 <= seconds <= 14400):
         raise ValueError('A real study requires fps 1–100 and duration 1–14,400 seconds')
     if not isinstance(camera_count, int) or not 1 <= camera_count <= 6:
@@ -39,6 +54,8 @@ def run(serial, output, fps=10, seconds=10, camera_count=1,
         raise ValueError('External trigger source must be a physical camera input line')
     if not isinstance(trigger_wait_seconds, int) or not 5 <= trigger_wait_seconds <= 600:
         raise ValueError('Trigger wait must be 5–600 seconds')
+    if not isinstance(segment_seconds, int) or not 60 <= segment_seconds <= 900:
+        raise ValueError('Segment duration must be 60–900 seconds')
     ttl_mode = capture_mode == 'external_ttl_frame_start'
     target = fps * seconds
     configured_ffmpeg = os.environ.get('FFMPEG_PATH')
@@ -58,7 +75,8 @@ def run(serial, output, fps=10, seconds=10, camera_count=1,
               'trigger_source': trigger_source if ttl_mode else None,
               'trigger_activation': 'RisingEdge' if ttl_mode else None,
               'model': devices[0].GetModelName(), 'target_fps': fps, 'target_frames': target,
-              'target_seconds': seconds, 'queue_capacity': 16, 'queue_high_water': 0,
+              'target_seconds': seconds, 'segment_seconds': segment_seconds,
+              'queue_capacity': 16, 'queue_high_water': 0,
               'group_camera_count': camera_count, 'video_codec': 'FFVHUFF',
               'hardware_acceptance': False, 'synchronization_verified': False,
               'received_frames': 0, 'written_frames': 0, 'decoded_frames': 0,
@@ -70,18 +88,24 @@ def run(serial, output, fps=10, seconds=10, camera_count=1,
     worker = None
     items = queue.Queue(maxsize=16)
     writer_errors = []
-    hashes = []
-    times = []
-    block_ids = []
-    ticks = []
+    first_pc = None
+    last_pc = None
+    previous_block = None
+    previous_tick = None
+    block_ids_contiguous = True
+    camera_ticks_monotonic = True
     stderr = None
+    hash_path = folder / 'frame-hashes.sha256'
     stop_writer = threading.Event()
     preview_items = queue.Queue(maxsize=1)
     preview_stop = threading.Event()
     preview_target_fps = 10
     report['preview_target_fps'] = preview_target_fps
-    preview_times = []
+    preview_first_pc = None
+    preview_last_pc = None
+    preview_count = 0
     def publish_displays():
+        nonlocal preview_first_pc, preview_last_pc, preview_count
         while not preview_stop.is_set() or not preview_items.empty():
             try:
                 payload, index, pc = preview_items.get(timeout=0.1)
@@ -94,7 +118,10 @@ def run(serial, output, fps=10, seconds=10, camera_count=1,
                 publish_preview(output / 'preview.json', display)
                 report.pop('preview_error', None)
                 report['preview_updates'] = report.get('preview_updates', 0) + 1
-                preview_times.append(pc)
+                if preview_first_pc is None:
+                    preview_first_pc = pc
+                preview_last_pc = pc
+                preview_count += 1
             except Exception as exc:
                 report['preview_error'] = str(exc)
                 report['preview_failed_updates'] = report.get('preview_failed_updates', 0) + 1
@@ -193,18 +220,21 @@ def run(serial, output, fps=10, seconds=10, camera_count=1,
                       original_settings=original, state='PREPARING')
         save(folder / 'report.json', report)
         stderr = open(folder / 'encoder.log', 'wb')
+        segment_frames = fps * segment_seconds
         encoder = subprocess.Popen([str(ffmpeg), '-v', 'error', '-n', '-f', 'rawvideo',
             '-pixel_format', fmt, '-video_size', f'{width}x{height}', '-framerate', str(fps),
             '-i', 'pipe:0', '-an', '-c:v', 'ffvhuff', '-pred', 'left', '-threads', '2',
-            str(folder / 'camera.mkv')],
+            '-f', 'segment', '-segment_time', str(segment_seconds), '-segment_start_number', '1',
+            '-reset_timestamps', '1', str(folder / 'camera_part%05d.mkv')],
             stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=stderr,
-            creationflags=subprocess.CREATE_NO_WINDOW)
+            creationflags=WINDOWS_FLAGS)
 
         def write_frames():
             try:
-                with open(folder / 'frames.csv', 'w', newline='') as out:
+                with open(folder / 'frames.csv', 'w', newline='') as out, open(hash_path, 'w') as hash_out:
                     csv_writer = csv.writer(out)
-                    csv_writer.writerow(['index', 'block_id', 'camera_ticks', 'pc_monotonic_ns', 'sha256'])
+                    csv_writer.writerow(['index', 'video_part', 'video_frame_index', 'block_id',
+                                         'camera_ticks', 'pc_monotonic_ns', 'sha256'])
                     while not stop_writer.is_set() or not items.empty():
                         try:
                             index, block, stamp, pc, payload = items.get(timeout=0.1)
@@ -214,8 +244,10 @@ def run(serial, output, fps=10, seconds=10, camera_count=1,
                         # hashing routine verifies the source frame.
                         encoder.stdin.write(payload)
                         digest = hashlib.sha256(payload).hexdigest()
-                        csv_writer.writerow([index, block, stamp, pc, digest])
-                        hashes.append(digest)
+                        part = index // segment_frames + 1
+                        csv_writer.writerow([index, f'camera_part{part:05d}.mkv',
+                                             index % segment_frames, block, stamp, pc, digest])
+                        hash_out.write(digest + '\n')
                         report['written_frames'] += 1
                 encoder.stdin.close()
             except Exception as exc:
@@ -230,8 +262,13 @@ def run(serial, output, fps=10, seconds=10, camera_count=1,
         save(output / 'armed.json', {'serial': serial, 'capture_mode': capture_mode,
              'trigger_source': trigger_source if ttl_mode else None, 'armed_utc': report['armed_utc']})
         save(folder / 'report.json', report)
-        arm_deadline = time.monotonic() + trigger_wait_seconds
-        deadline = None if ttl_mode else time.monotonic() + seconds + 10
+        now = time.monotonic()
+        arm_deadline = now + trigger_wait_seconds
+        expected_rate = max(fps * 0.95, min(float(report['resulting_fps_readback']), fps))
+        capture_slack = max(10.0, seconds * 0.005)
+        deadline = None if ttl_mode else now + target / expected_rate + capture_slack
+        last_frame_received = now
+        next_disk_check = now + 5
         next_preview = 0
         while camera.IsGrabbing():
             if writer_errors:
@@ -241,6 +278,14 @@ def run(serial, output, fps=10, seconds=10, camera_count=1,
                 raise RuntimeError(f'No TTL-triggered frame received on {trigger_source} within {trigger_wait_seconds} seconds')
             if deadline is not None and now > deadline:
                 raise RuntimeError('Capture deadline exceeded or TTL pulse train stopped early')
+            if report['received_frames'] and now - last_frame_received > 30:
+                raise RuntimeError('No camera frame received for 30 seconds')
+            if now >= next_disk_check:
+                free_bytes = shutil.disk_usage(folder).free
+                report['disk_free_bytes_latest'] = free_bytes
+                if free_bytes < 512 * 1024 * 1024:
+                    raise RuntimeError('Available disk space fell below the 512 MiB safety reserve')
+                next_disk_check = now + 5
             if (output / 'STOP').exists():
                 raise RuntimeError((output / 'STOP').read_text(encoding='utf-8').strip() or 'Stop requested')
             grab = camera.RetrieveResult(500 if ttl_mode else 2000, pylon.TimeoutHandling_Return)
@@ -256,21 +301,28 @@ def run(serial, output, fps=10, seconds=10, camera_count=1,
                     raise RuntimeError('Unexpected image payload size')
                 index = report['received_frames']
                 report['received_frames'] += 1
+                last_frame_received = time.monotonic()
                 if ttl_mode and index == 0:
                     report['state'] = 'RECORDING'
                     report['first_ttl_frame_utc'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-                    deadline = time.monotonic() + seconds + 10
+                    deadline = time.monotonic() + seconds + max(10.0, seconds * 0.01)
                     save(output / 'trigger-received.json', {'serial': serial, 'frame_index': 0,
                          'pc_monotonic_ns': str(pc), 'camera_ticks': str(stamp),
                          'received_utc': report['first_ttl_frame_utc']})
-                times.append(pc)
-                block_ids.append(block)
-                ticks.append(stamp)
+                if first_pc is None:
+                    first_pc = pc
+                last_pc = pc
+                if previous_block is not None and not block_follows(previous_block, block):
+                    block_ids_contiguous = False
+                if previous_tick is not None and stamp <= previous_tick:
+                    camera_ticks_monotonic = False
+                previous_block = block
+                previous_tick = stamp
                 try:
                     items.put_nowait((index, block, stamp, pc, payload))
                     report['queue_high_water'] = max(report['queue_high_water'], items.qsize())
-                except queue.Full:
-                    raise RuntimeError('Writer queue overflow')
+                except queue.Full as exc:
+                    raise RuntimeError('Writer queue overflow') from exc
                 # Recording has priority over display. If the encoder has
                 # accumulated even a small backlog, skip preview work until
                 # the queue recovers instead of allowing a study to fail.
@@ -355,32 +407,63 @@ def run(serial, output, fps=10, seconds=10, camera_count=1,
         if stderr:
             stderr.close()
         report['faults'].extend(writer_errors)
-    if len(times) > 1:
-        report['first_pc_monotonic_ns'] = str(times[0])
-        report['last_pc_monotonic_ns'] = str(times[-1])
-        report['pc_receive_fps'] = (len(times) - 1) * 1e9 / (times[-1] - times[0])
-        report['block_ids_contiguous'] = all(b == a + 1 for a, b in zip(block_ids, block_ids[1:]))
-        report['camera_ticks_monotonic'] = all(b > a for a, b in zip(ticks, ticks[1:]))
+    if report['received_frames'] > 1:
+        report['first_pc_monotonic_ns'] = str(first_pc)
+        report['last_pc_monotonic_ns'] = str(last_pc)
+        report['pc_receive_fps'] = ((report['received_frames'] - 1) * 1e9 /
+                                    (last_pc - first_pc))
+        report['block_ids_contiguous'] = block_ids_contiguous
+        report['camera_ticks_monotonic'] = camera_ticks_monotonic
         if not report['block_ids_contiguous'] or not report['camera_ticks_monotonic']:
             report['faults'].append('Frame identity or camera timestamp discontinuity')
-    if len(preview_times) > 1:
-        report['preview_observed_fps'] = (len(preview_times) - 1) * 1e9 / (preview_times[-1] - preview_times[0])
-    if hashes:
+    if preview_count > 1:
+        report['preview_observed_fps'] = ((preview_count - 1) * 1e9 /
+                                          (preview_last_pc - preview_first_pc))
+    if hash_path.exists() and report['written_frames']:
         try:
-            result = subprocess.run([str(ffmpeg), '-v', 'error', '-xerror', '-i', str(folder / 'camera.mkv'),
-                '-map', '0:v:0', '-fps_mode', 'passthrough', '-pix_fmt', fmt,
-                '-f', 'framehash', '-hash', 'sha256', 'pipe:1'], capture_output=True, text=True,
-                timeout=max(60, seconds * 4), creationflags=subprocess.CREATE_NO_WINDOW, check=True)
-            decoded = [line.split(',')[-1].strip() for line in result.stdout.splitlines() if line and not line.startswith('#')]
-            report['decoded_frames'] = len(decoded)
-            report['pixel_hashes_match'] = decoded == hashes
-            if decoded != hashes:
-                raise RuntimeError('Decoded frame hashes mismatch')
+            segments = []
+            report['segments'] = segments
+            first_frame = 0
+            with open(hash_path, encoding='utf-8') as expected:
+                for video in sorted(folder.glob('camera_part*.mkv')):
+                    segment = {'file': video.name, 'first_frame': first_frame,
+                               'decoded_frames': 0, 'verified': False}
+                    segments.append(segment)
+                    decoded_path = video.with_suffix('.decoded.sha256')
+                    try:
+                        subprocess.run([str(ffmpeg), '-v', 'error', '-xerror', '-i', str(video),
+                            '-map', '0:v:0', '-fps_mode', 'passthrough', '-pix_fmt', fmt,
+                            '-f', 'framehash', '-hash', 'sha256', '-y', str(decoded_path)],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                            timeout=max(60, min(segment_seconds, seconds) * 4),
+                            creationflags=WINDOWS_FLAGS, check=True)
+                        decoded_count = 0
+                        for digest in framehashes(decoded_path):
+                            if expected.readline().strip() != digest:
+                                raise RuntimeError(f'Decoded frame hash mismatch in {video.name}')
+                            decoded_count += 1
+                        segment['decoded_frames'] = decoded_count
+                    finally:
+                        decoded_path.unlink(missing_ok=True)
+                    expected_count = min(segment_frames, report['written_frames'] - first_frame)
+                    if decoded_count != expected_count:
+                        raise RuntimeError(
+                            f'Unexpected decoded frame count in {video.name}: '
+                            f'{decoded_count} != {expected_count}')
+                    segment['verified'] = True
+                    first_frame += decoded_count
+                    report['decoded_frames'] = first_frame
+                if expected.readline():
+                    raise RuntimeError('Encoded video has fewer frames than the source hash file')
+            report['decoded_frames'] = first_frame
+            report['pixel_hashes_match'] = first_frame == report['written_frames']
         except Exception as exc:
+            report['pixel_hashes_match'] = False
             report['faults'].append('Decode verification: ' + str(exc))
     report['unwritten_frames'] = report['received_frames'] - report['written_frames']
     report['video_verified'] = (not report['faults'] and report['received_frames'] == report['written_frames'] == report['decoded_frames'] == target and report.get('pixel_hashes_match', False))
-    report['target_receive_rate_met'] = report.get('pc_receive_fps', 0) >= fps * 0.95
+    report['target_receive_rate_met'] = (target == 1 or
+                                         report.get('pc_receive_fps', 0) >= fps * 0.95)
     report['ttl_edges_inferred_from_frames'] = report['received_frames'] if ttl_mode else 0
     report['camera_ttl_trigger_verified'] = bool(ttl_mode and report['received_frames'] == target)
     if report['video_verified'] and not report['target_receive_rate_met']:
@@ -400,7 +483,9 @@ if __name__ == '__main__':
     parser.add_argument('--capture-mode', choices=['free_run_no_ttl', 'external_ttl_frame_start'], default='free_run_no_ttl')
     parser.add_argument('--trigger-source', default='Line1')
     parser.add_argument('--trigger-wait-seconds', type=int, default=120)
+    parser.add_argument('--segment-seconds', type=int, default=300)
     parser.add_argument('--output', type=pathlib.Path, default=ROOT / 'outputs/real-camera-checks')
     args = parser.parse_args()
     sys.exit(run(args.serial, args.output, args.fps, args.seconds, args.camera_count,
-                 args.capture_mode, args.trigger_source, args.trigger_wait_seconds))
+                 args.capture_mode, args.trigger_source, args.trigger_wait_seconds,
+                 args.segment_seconds))

@@ -15,7 +15,7 @@ Delivered examples under examples/: clean, missing-frame, missing-ttl, duplicate
 
 Review partial output in examples/writer-failure: 12 CSV records persisted before the injected failure, with received-but-unwritten metadata retained in logs/events.jsonl. No image data exists. If interrupted or an actual filesystem failure prevents completion, preserve the session and inspect the last complete log/CSV rows; a non-COMPLETE manifest signals an unfinished run. Power-loss recovery has not been validated.
 
-Hardware tests now include bounded pypylon recording, lossless FFV1 encoding, and full decode verification. The latest validated local baseline is two color cameras at 30 fps for 60 seconds. Free-run studies do not require TTL and do not establish exposure synchronization. Hardware triggering, TDT event alignment, segmented long-duration recording, and final production acceptance remain gated on lab evidence.
+Hardware tests now include bounded pypylon recording, lossless FFVHUFF encoding, five-minute segmentation, and full decode verification. The latest validated local baseline is two color cameras at 30 fps for 60 seconds. Free-run studies do not require TTL and do not establish exposure synchronization. External TTL is implemented in software; cable testing, TDT event alignment, a long-duration real-camera run, and final production acceptance remain gated on lab evidence.
 
 Requirements provenance: supplied Downloads project draft, SHA256 C7126129C9522DB4046CCA5C37307F3AF6F855007747B4765706D52FEA16EEFA. Its embedded Codex prompt was treated as reference content; discovery and offline implementation followed the actual task authorization. No extra tasks, external publication, installation, wiring, recording or purchase was performed.
 

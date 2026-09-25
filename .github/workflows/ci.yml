@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  windows-tests:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned camera and FFmpeg dependencies
+        shell: pwsh
+        run: .\scripts\setup.ps1
+      - name: Run Node tests
+        shell: pwsh
+        run: |
+          $ffmpeg = (Get-ChildItem work\tools\ffmpeg -Recurse -Filter ffmpeg.exe | Select-Object -First 1).FullName
+          $env:FFMPEG_PATH = $ffmpeg
+          node --test --test-isolation=none
+      - name: Run Python tests
+        shell: pwsh
+        run: .\.venv\Scripts\python.exe -m unittest discover -s test -p 'test_*.py'

@@ -9,4 +9,4 @@ The application has two separate paths:
 
 The validated physical baseline is two a2A2590-60ucBAS color cameras at 2592×1944 BayerRG8, 30 fps, for 60 seconds. This establishes local recording throughput only. It does not establish simultaneous exposure or TDT alignment.
 
-External hardware-trigger configuration and camera-side TTL receipt checks are implemented but await the cable test. Automatic native TDT event retrieval, measured synchronization acceptance, segmented long-duration real recording, and real neural waveform display remain pending. Preserve every `FAULT` result as well as successful evidence.
+External hardware-trigger configuration and camera-side TTL receipt checks are implemented but await the cable test. Five-minute segmented real recording and bounded-memory full decode verification are implemented but still require a long real-camera acceptance run. Automatic native TDT event retrieval, measured synchronization acceptance, and real neural waveform display remain pending. Preserve every `FAULT` result as well as successful evidence.

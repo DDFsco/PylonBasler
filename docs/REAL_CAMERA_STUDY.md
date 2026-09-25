@@ -26,4 +26,6 @@ The final report includes `preview_target_fps`, `preview_updates`, `preview_skip
 
 ## Limits
 
-The interface accepts integer rates from 1–100 fps and durations from 1–14,400 seconds. Long studies currently produce one MKV per camera and perform a full decode and pixel-hash comparison after capture. Segmented real-camera recording remains future work, so long-duration use requires additional hardware validation and sufficient free storage.
+The interface accepts integer rates from 1–100 fps and durations from 1–14,400 seconds. Real studies write five-minute FFVHUFF/MKV segments. After capture, every segment is fully decoded and compared with a streaming source-frame hash file, keeping verification memory bounded. Long-duration use still requires hardware validation and sufficient free storage.
+
+Saved-frame replay maps the global frame index to its segment and uses intra-frame timestamp seeking, so replay latency does not grow with the complete recording length.

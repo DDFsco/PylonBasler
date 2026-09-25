@@ -9,6 +9,8 @@ import sys
 import time
 import numpy as np
 
+WINDOWS_FLAGS = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+
 def publish_preview(path, value, attempts=8):
     """Retry transient Windows sharing conflicts on a preview worker, not capture."""
     temp = path.with_suffix(path.suffix + '.tmp')
@@ -48,6 +50,19 @@ def preview(payload, width, height, pixel, max_width=480):
             'data': base64.b64encode(rgb.tobytes()).decode(),
             'display_conversion': 'Bayer RG 2x2 RGB, no color calibration' if pixel == 'BayerRG8' else pixel}
 
+
+def resolve_segment(report, index):
+    """Return the video file and segment-local frame index."""
+    segments = report.get('segments')
+    if not segments:
+        return 'camera.mkv', index
+    for segment in segments:
+        first = int(segment['first_frame'])
+        count = int(segment['decoded_frames'])
+        if first <= index < first + count:
+            return segment['file'], index - first
+    raise ValueError('Frame index is not represented by a verified segment')
+
 if __name__ == '__main__':
     folder, index = pathlib.Path(sys.argv[1]), int(sys.argv[2])
     report = json.loads((folder / 'report.json').read_text())
@@ -64,10 +79,17 @@ if __name__ == '__main__':
     exe = pathlib.Path(configured_ffmpeg) if configured_ffmpeg else bundled_ffmpeg or shutil.which('ffmpeg')
     if not exe:
         raise RuntimeError('FFmpeg was not found. Run scripts/setup.ps1 or set FFMPEG_PATH.')
-    data = subprocess.run([str(exe), '-v', 'error', '-xerror', '-i', str(folder / 'camera.mkv'),
-        '-vf', f"select='eq(n,{index})'", '-frames:v', '1', '-pix_fmt', fmt,
+    video_file, local_index = resolve_segment(report, index)
+    fps = float(report['target_fps'])
+    if not 0 < fps <= 1000:
+        raise ValueError('Invalid recording frame rate')
+    # FFVHUFF is intra-frame. Input seeking avoids decoding every preceding
+    # frame and makes replay time independent of the global frame index.
+    data = subprocess.run([str(exe), '-v', 'error', '-xerror', '-ss', f'{local_index / fps:.9f}',
+        '-i', str(folder / video_file), '-frames:v', '1', '-pix_fmt', fmt,
         '-f', 'rawvideo', 'pipe:1'], capture_output=True, timeout=15, check=True,
-        creationflags=subprocess.CREATE_NO_WINDOW).stdout
+        creationflags=WINDOWS_FLAGS).stdout
     result = preview(data, width, height, pixel)
-    result.update(serial=report['serial'], frame_index=index, source='decoded_saved_video')
+    result.update(serial=report['serial'], frame_index=index, segment=video_file,
+                  segment_frame_index=local_index, source='decoded_saved_video')
     print(json.dumps(result))
